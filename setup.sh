@@ -39,7 +39,7 @@ TARGET_KERNEL="6.17.0-19-generic"
 echo ""
 echo "============================================================"
 echo "  Ubuntu 24.04 Setup -- User: $TARGET_USER"
-echo "  Kernel: $TARGET_KERNEL | Docker | VS Code | AMD ROCm"
+echo "  Kernel: $TARGET_KERNEL | Docker | VS Code | AMD ROCm | Python AI/ML"
 echo "============================================================"
 echo ""
 
@@ -247,9 +247,32 @@ for GRP in render video; do
 done
 
 # ============================================================
-# STEP 7 -- Verification Summary
+# STEP 7 -- Python AI/ML Dependencies
 # ============================================================
-section "STEP 7 -- Verification Summary"
+section "STEP 7 -- Python AI/ML Dependencies"
+
+apt install -y \
+  python3 python3-venv python3-pip \
+  espeak ffmpeg libsndfile1 portaudio19-dev \
+  libcairo2-dev libgirepository1.0-dev \
+  gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+  libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+  gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0
+log "Python AI/ML dependencies installed."
+
+TARGET_HOME=$(getent passwd "$TARGET_USER" | cut -d: -f6)
+TARGET_BASHRC="${TARGET_HOME}/.bashrc"
+if grep -q "PYGLFW_LIBRARY_VARIANT" "$TARGET_BASHRC" 2>/dev/null; then
+  warn "PYGLFW_LIBRARY_VARIANT already set in ${TARGET_BASHRC}. Skipping."
+else
+  echo 'export PYGLFW_LIBRARY_VARIANT=x11' >> "$TARGET_BASHRC"
+  log "Added PYGLFW_LIBRARY_VARIANT=x11 to ${TARGET_BASHRC} (fixes MuJoCo GUI on Wayland)."
+fi
+
+# ============================================================
+# STEP 8 -- Verification Summary
+# ============================================================
+section "STEP 8 -- Verification Summary"
 
 echo "============================================================"
 echo "  COMPONENT CHECKS"
