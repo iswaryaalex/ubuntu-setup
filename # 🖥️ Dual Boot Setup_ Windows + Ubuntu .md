@@ -16,6 +16,11 @@ During Windows setup:
 ---
 ## Disable Windows Fast Startup (if dual booting with Windows):
 
+Run as Administrator in command prompt 
+`powercfg /h off`
+
+or
+
 Control Panel → Power Options → "Choose what the power buttons do" → uncheck Turn on fast startup
 
 ## Disable BitLocker
