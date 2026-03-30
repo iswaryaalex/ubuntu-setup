@@ -60,7 +60,7 @@ F10
 
 ### Partition
 
-* Allocate **100 GB** for Ubuntu
+* Allocate **1 TB** for Ubuntu
 
 ### Credentials
 
