@@ -14,6 +14,9 @@ During Windows setup:
 * Proceed with a **local account** without having to create microsft account
 
 ---
+## Disable Windows Fast Startup (if dual booting with Windows):
+
+Control Panel → Power Options → "Choose what the power buttons do" → uncheck Turn on fast startup
 
 ## Disable BitLocker
 
