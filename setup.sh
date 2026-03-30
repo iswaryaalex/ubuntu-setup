@@ -34,7 +34,7 @@ if [[ -z "$TARGET_USER" ]]; then
   error "No username provided. Usage: sudo bash setup.sh <username>"
 fi
 
-TARGET_KERNEL="6.17.0-1012-oem"
+TARGET_KERNEL="6.17.0-19-generic"
 
 echo ""
 echo "============================================================"
