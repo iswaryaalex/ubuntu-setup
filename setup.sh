@@ -211,7 +211,7 @@ else
   log "Confirmed kernel ${ACTIVE_KERNEL} -- safe to install ROCm."
 fi
 
-ROCM_DEB_URL="https://repo.radeon.com/amdgpu-install/7.2/ubuntu/noble/amdgpu-install_7.2.70200-1_all.deb"
+ROCM_DEB_URL="https://repo.radeon.com/amdgpu-install/7.2.1/ubuntu/noble/amdgpu-install_7.2.1.70201-1_all.deb"
 ROCM_DEB="/tmp/amdgpu-install.deb"
 
 if command -v amdgpu-install &>/dev/null; then
