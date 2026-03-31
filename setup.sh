@@ -237,6 +237,20 @@ else
   apt update -y
   amdgpu-install -y --usecase=graphics,rocm
   log "ROCm installed."
+
+  # The amdgpu kernel module must be loaded before render/video group
+  # membership grants GPU access. This matches the AMD manual process which
+  # reboots here, then adds groups in a separate step after the reboot.
+  echo ""
+  warn "ROCm requires a reboot to load the amdgpu kernel module before GPU"
+  warn "group permissions can be applied. Re-run this script after rebooting."
+  read -rp "  Reboot now and re-run this script after? (y/n): " DO_REBOOT
+  if [[ "$DO_REBOOT" =~ ^[Yy]$ ]]; then
+    log "Rebooting..."
+    reboot
+  else
+    error "Cannot safely apply GPU group permissions without rebooting first. Re-run after reboot."
+  fi
 fi
 
 # amdgpu-install creates the render and video groups; error out if they are
@@ -275,6 +289,13 @@ if grep -q "PYGLFW_LIBRARY_VARIANT" "$TARGET_BASHRC" 2>/dev/null; then
 else
   echo 'export PYGLFW_LIBRARY_VARIANT=x11' >> "$TARGET_BASHRC"
   log "Added PYGLFW_LIBRARY_VARIANT=x11 to ${TARGET_BASHRC} (fixes MuJoCo GUI on Wayland)."
+fi
+
+if grep -q "HSA_OVERRIDE_GFX_VERSION" "$TARGET_BASHRC" 2>/dev/null; then
+  warn "HSA_OVERRIDE_GFX_VERSION already set in ${TARGET_BASHRC}. Skipping."
+else
+  echo 'export HSA_OVERRIDE_GFX_VERSION=11.5.1' >> "$TARGET_BASHRC"
+  log "Added HSA_OVERRIDE_GFX_VERSION=11.5.1 to ${TARGET_BASHRC} (required for ROCm/PyTorch on this GPU)."
 fi
 
 # ============================================================
