@@ -1,8 +1,7 @@
 #!/bin/bash
 # Ubuntu 24.04 Setup Script
-# Installs: kernel 6.17.x, user/sudo, Docker, VS Code, Python AI/ML deps
 # Usage: sudo bash setup.sh <username>
-# After this completes, run: sudo bash install_rocm.sh
+# Re-run after each reboot -- safe to run multiple times.
 
 set -euo pipefail
 
@@ -13,118 +12,72 @@ fi
 
 TARGET_USER="${1:-}"
 if [[ -z "$TARGET_USER" ]]; then
-  echo "[ERROR] No username provided. Usage: sudo bash setup.sh <username>"
+  echo "[ERROR] Usage: sudo bash setup.sh <username>"
   exit 1
 fi
 
 TARGET_KERNEL="6.17.0-19-generic"
+BASHRC="/home/${TARGET_USER}/.bashrc"
 
 echo ""
-echo "========================================================"
-echo "  Ubuntu 24.04 Setup -- User: $TARGET_USER"
-echo "========================================================"
-echo ""
+echo "================================================"
+echo "  Ubuntu 24.04 Setup  |  User: $TARGET_USER"
+echo "================================================"
 
-# ── System update ─────────────────────────────────────────────
-echo "[..] Updating system packages..."
+# ── 1. System update ──────────────────────────────
 apt update -y && apt upgrade -y
-echo "[OK] System updated."
 
-# ── Kernel ────────────────────────────────────────────────────
-echo ""
-echo "[..] Checking kernel..."
+# ── 2. Kernel ─────────────────────────────────────
+if [[ "$(uname -r)" != "6.17"* ]]; then
+  apt install -y \
+    linux-image-${TARGET_KERNEL} \
+    linux-headers-${TARGET_KERNEL} \
+    linux-modules-extra-${TARGET_KERNEL}
 
-if [[ "$(uname -r)" == "6.17"* ]]; then
-  echo "[OK] Kernel $(uname -r) is 6.17 series -- skipping install."
-else
-  if ! dpkg -l 2>/dev/null | grep -q "linux-image-${TARGET_KERNEL}"; then
-    echo "[..] Installing kernel ${TARGET_KERNEL}..."
-    apt install -y \
-      linux-image-${TARGET_KERNEL} \
-      linux-headers-${TARGET_KERNEL} \
-      linux-modules-extra-${TARGET_KERNEL}
-    echo "[OK] Kernel ${TARGET_KERNEL} installed."
-  fi
-
-  # Pin GRUB to boot the target kernel.
   sed -i 's/^GRUB_DEFAULT=.*/GRUB_DEFAULT=saved/' /etc/default/grub
   update-grub 2>/dev/null
+
   GRUB_CFG="/boot/grub/grub.cfg"
   SUBMENU=$(grep -oP "(?<=submenu ')[^']*" "$GRUB_CFG" 2>/dev/null | grep -i advanced | head -1 || true)
   ENTRY=$(grep -oP "(?<=menuentry ')[^']*" "$GRUB_CFG" 2>/dev/null | grep "${TARGET_KERNEL}" | grep -v recovery | head -1 || true)
-  if [[ -n "$SUBMENU" && -n "$ENTRY" ]]; then
-    grub-set-default "${SUBMENU}>${ENTRY}"
-  elif [[ -n "$ENTRY" ]]; then
-    grub-set-default "$ENTRY"
-  fi
-  echo "[OK] GRUB pinned to ${TARGET_KERNEL}."
+  [[ -n "$SUBMENU" && -n "$ENTRY" ]] && grub-set-default "${SUBMENU}>${ENTRY}" || grub-set-default "$ENTRY"
 
-  echo ""
-  echo "[!!] Reboot required to activate kernel ${TARGET_KERNEL}."
-  echo "     Re-run this script after rebooting."
-  read -rp "Reboot now? (y/n): " R
-  [[ "$R" =~ ^[Yy]$ ]] && reboot || exit 0
+  echo "[OK] Kernel ${TARGET_KERNEL} installed. Reboot and re-run this script."
+  read -rp "Reboot now? (y/n): " R && [[ "$R" =~ ^[Yy]$ ]] && reboot || exit 0
 fi
+echo "[OK] Kernel: $(uname -r)"
 
-# ── User & sudo ───────────────────────────────────────────────
-echo ""
-if ! id "$TARGET_USER" &>/dev/null; then
-  echo "[..] Creating user $TARGET_USER..."
-  adduser --gecos "" --disabled-password "$TARGET_USER"
-fi
-if ! groups "$TARGET_USER" | grep -qw sudo; then
-  usermod -aG sudo "$TARGET_USER"
-fi
-echo "[OK] User $TARGET_USER configured with sudo."
+# ── 3. User & sudo ────────────────────────────────
+id "$TARGET_USER" &>/dev/null || adduser --gecos "" --disabled-password "$TARGET_USER"
+usermod -aG sudo "$TARGET_USER"
+echo "[OK] User $TARGET_USER configured."
 
-# ── Docker ────────────────────────────────────────────────────
-echo ""
-if command -v docker &>/dev/null; then
-  echo "[OK] Docker already installed -- skipping."
-else
-  echo "[..] Installing Docker..."
-  snap list docker &>/dev/null 2>&1 && snap remove docker || true
-  apt install -y ca-certificates curl gnupg
-  install -m 0755 -d /etc/apt/keyrings
-  curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-  chmod a+r /etc/apt/keyrings/docker.asc
-  if [[ ! -f /etc/apt/sources.list.d/docker.list ]]; then
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
+# ── 4. Docker ─────────────────────────────────────
+apt install -y ca-certificates curl gnupg
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
 https://download.docker.com/linux/ubuntu \
 $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
-      | tee /etc/apt/sources.list.d/docker.list > /dev/null
-  fi
-  apt update -y
-  apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-  echo "[OK] Docker installed."
-fi
+  | tee /etc/apt/sources.list.d/docker.list > /dev/null
+apt update -y
+apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 systemctl enable --now docker
-groups "$TARGET_USER" | grep -qw docker || usermod -aG docker "$TARGET_USER"
-echo "[OK] Docker group set for $TARGET_USER."
+usermod -aG docker "$TARGET_USER"
+echo "[OK] Docker installed."
 
-# ── VS Code ───────────────────────────────────────────────────
-echo ""
-if dpkg -l code &>/dev/null 2>&1; then
-  echo "[OK] VS Code already installed -- skipping."
-else
-  echo "[..] Installing VS Code..."
-  apt install -y wget gpg apt-transport-https
-  wget -qO- https://packages.microsoft.com/keys/microsoft.asc \
-    | gpg --dearmor > /etc/apt/keyrings/microsoft.gpg
-  chmod a+r /etc/apt/keyrings/microsoft.gpg
-  if [[ ! -f /etc/apt/sources.list.d/vscode.list ]]; then
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/microsoft.gpg] \
+# ── 5. VS Code ────────────────────────────────────
+apt install -y wget gpg apt-transport-https
+wget -qO- https://packages.microsoft.com/keys/microsoft.asc \
+  | gpg --dearmor > /etc/apt/keyrings/microsoft.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/microsoft.gpg] \
 https://packages.microsoft.com/repos/code stable main" \
-      | tee /etc/apt/sources.list.d/vscode.list > /dev/null
-  fi
-  apt update -y
-  apt install -y code
-  echo "[OK] VS Code installed."
-fi
+  | tee /etc/apt/sources.list.d/vscode.list > /dev/null
+apt update -y && apt install -y code
+echo "[OK] VS Code installed."
 
-# ── Python AI/ML deps ─────────────────────────────────────────
-echo ""
-echo "[..] Installing Python AI/ML dependencies..."
+# ── 6. Python AI/ML deps ──────────────────────────
 apt install -y \
   python3 python3-venv python3-pip \
   espeak ffmpeg libsndfile1 portaudio19-dev \
@@ -132,21 +85,38 @@ apt install -y \
   gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
   libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
   gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0
-echo "[OK] Python AI/ML dependencies installed."
+echo "[OK] Python AI/ML deps installed."
 
-# Set env var for MuJoCo GUI on Wayland (needs to happen after user exists).
-TARGET_BASHRC="/home/${TARGET_USER}/.bashrc"
-grep -q "PYGLFW_LIBRARY_VARIANT" "$TARGET_BASHRC" 2>/dev/null || \
-  echo 'export PYGLFW_LIBRARY_VARIANT=x11' >> "$TARGET_BASHRC"
-echo "[OK] PYGLFW_LIBRARY_VARIANT=x11 set in $TARGET_BASHRC."
+# ── 7. ROCm ───────────────────────────────────────
+if ! command -v amdgpu-install &>/dev/null; then
+  apt install -y python3-setuptools python3-wheel
+  apt update -y
+  wget https://repo.radeon.com/amdgpu-install/7.2.1/ubuntu/noble/amdgpu-install_7.2.1.70201-1_all.deb \
+       -O /tmp/amdgpu-install.deb
+  apt install -y /tmp/amdgpu-install.deb
+  rm -f /tmp/amdgpu-install.deb
+  apt update -y
+  amdgpu-install -y --usecase=graphics,rocm
+  echo "[OK] ROCm installed. Reboot and re-run this script to finish group setup."
+  read -rp "Reboot now? (y/n): " R && [[ "$R" =~ ^[Yy]$ ]] && reboot || exit 0
+fi
+echo "[OK] ROCm ready."
 
-# ── Done ──────────────────────────────────────────────────────
+# ── 8. GPU groups & env vars ──────────────────────
+usermod -aG render,video "$TARGET_USER"
+echo "[OK] $TARGET_USER added to render and video groups."
+
+grep -q "HSA_OVERRIDE_GFX_VERSION" "$BASHRC" 2>/dev/null || \
+  echo 'export HSA_OVERRIDE_GFX_VERSION=11.5.1' >> "$BASHRC"
+
+grep -q "PYGLFW_LIBRARY_VARIANT" "$BASHRC" 2>/dev/null || \
+  echo 'export PYGLFW_LIBRARY_VARIANT=x11' >> "$BASHRC"
+echo "[OK] Environment variables set in $BASHRC."
+
+# ── Done ──────────────────────────────────────────
 echo ""
-echo "========================================================"
-echo "  Setup complete!"
-echo "  Docker  : $(docker --version 2>/dev/null || echo NOT FOUND)"
-echo "  VS Code : $(dpkg -l code 2>/dev/null | awk '/^ii/{print $3}' || echo NOT FOUND)"
-echo "  Kernel  : $(uname -r)"
-echo ""
-echo "  Next: sudo bash install_rocm.sh"
-echo "========================================================"
+echo "================================================"
+echo "  All done! Reboot to activate all changes."
+echo "  Verify after reboot: rocminfo | dkms status"
+echo "================================================"
+read -rp "Reboot now? (y/n): " R && [[ "$R" =~ ^[Yy]$ ]] && reboot || echo "[!!] Remember to reboot."
