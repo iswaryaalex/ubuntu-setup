@@ -220,29 +220,37 @@ if command -v amdgpu-install &>/dev/null; then
 else
   apt install -y python3-setuptools python3-wheel wget
 
+  # Refresh package lists before downloading so dependency resolution uses
+  # current metadata (matches the AMD manual install sequence).
+  apt update -y
+
   log "Validating ROCm installer URL..."
   if ! wget --spider -q "$ROCM_DEB_URL" 2>/dev/null; then
     error "ROCm URL not reachable: $ROCM_DEB_URL"
   fi
 
-  wget -q "$ROCM_DEB_URL" -O "$ROCM_DEB"
+  wget "$ROCM_DEB_URL" -O "$ROCM_DEB"
+  # Install the amdgpu-install package (adds AMD apt repos to the system).
   apt install -y "$ROCM_DEB"
+  rm -f "$ROCM_DEB"
+  # Refresh again to pick up the newly added AMD repos before running the installer.
   apt update -y
   amdgpu-install -y --usecase=graphics,rocm
-  rm -f "$ROCM_DEB"
   log "ROCm installed."
 fi
 
+# amdgpu-install creates the render and video groups; error out if they are
+# missing rather than silently skipping -- a missing group means the driver
+# install failed and GPU access will not work.
 for GRP in render video; do
-  if getent group "$GRP" &>/dev/null; then
-    if groups "$TARGET_USER" | grep -qw "$GRP"; then
-      warn "'$TARGET_USER' already in $GRP group. Skipping."
-    else
-      usermod -aG "$GRP" "$TARGET_USER"
-      log "Added '$TARGET_USER' to $GRP group."
-    fi
+  if ! getent group "$GRP" &>/dev/null; then
+    error "Group '$GRP' not found after ROCm install -- amdgpu-install may have failed. Check output above."
+  fi
+  if groups "$TARGET_USER" | grep -qw "$GRP"; then
+    warn "'$TARGET_USER' already in $GRP group. Skipping."
   else
-    warn "Group '$GRP' not found -- driver may not be fully installed."
+    usermod -aG "$GRP" "$TARGET_USER"
+    log "Added '$TARGET_USER' to $GRP group."
   fi
 done
 
