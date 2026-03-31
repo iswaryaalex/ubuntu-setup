@@ -35,6 +35,7 @@ if [[ -z "$TARGET_USER" ]]; then
 fi
 
 TARGET_KERNEL="6.18.20-061820-generic"
+KERNEL_BASE_URL="https://kernel.ubuntu.com/mainline/v6.18.20/amd64"
 
 echo ""
 echo "============================================================"
@@ -51,9 +52,91 @@ apt update -y && apt upgrade -y
 log "System updated."
 
 # ============================================================
-# STEP 2 -- User Creation & Sudo Access
+# STEP 2 -- Mainline Kernel + GRUB Pin
 # ============================================================
-section "STEP 2 -- User Creation & Sudo Access"
+# Run kernel install BEFORE ROCm so DKMS only ever sees 6.18 headers
+# when amdgpu is registered. Mainline kernels are unsigned -- Secure
+# Boot must be disabled before running this script.
+# The script must be run a second time after rebooting to complete
+# the remaining steps (Docker, VS Code, ROCm, Python).
+# ============================================================
+section "STEP 2 -- Mainline Kernel ${TARGET_KERNEL}"
+
+RUNNING_KERNEL=$(uname -r)
+
+if [[ "$RUNNING_KERNEL" == "${TARGET_KERNEL}"* ]]; then
+  log "Already running kernel ${TARGET_KERNEL}. Continuing with remaining steps."
+else
+  if ! dpkg -l 2>/dev/null | grep -q "linux-image-unsigned-${TARGET_KERNEL}"; then
+    log "Installing mainline kernel ${TARGET_KERNEL}..."
+
+    apt install -y wget curl
+
+    log "Fetching package filenames from kernel.ubuntu.com..."
+    INDEX=$(curl -fsSL "${KERNEL_BASE_URL}/")
+
+    DEB_HEADERS_ALL=$(echo "$INDEX" | grep -oP 'linux-headers-[0-9._-]+_all\.deb'                          | head -1)
+    DEB_HEADERS=$(echo "$INDEX"     | grep -oP "linux-headers-${TARGET_KERNEL}_[^\"' ]+_amd64\.deb"        | head -1)
+    DEB_IMAGE=$(echo "$INDEX"       | grep -oP "linux-image-unsigned-${TARGET_KERNEL}_[^\"' ]+_amd64\.deb" | head -1)
+    DEB_MODULES=$(echo "$INDEX"     | grep -oP "linux-modules-${TARGET_KERNEL}_[^\"' ]+_amd64\.deb"        | head -1)
+    DEB_MODULES_EXTRA=$(echo "$INDEX" | grep -oP "linux-modules-extra-${TARGET_KERNEL}_[^\"' ]+_amd64\.deb" | head -1 || true)
+
+    [[ -z "$DEB_HEADERS" ]] && error "Could not resolve linux-headers filename from ${KERNEL_BASE_URL}"
+    [[ -z "$DEB_IMAGE"   ]] && error "Could not resolve linux-image filename from ${KERNEL_BASE_URL}"
+    [[ -z "$DEB_MODULES" ]] && error "Could not resolve linux-modules filename from ${KERNEL_BASE_URL}"
+
+    KERNEL_TMP=$(mktemp -d)
+    log "Downloading kernel packages..."
+    [[ -n "$DEB_HEADERS_ALL"   ]] && wget -q "${KERNEL_BASE_URL}/${DEB_HEADERS_ALL}"   -O "${KERNEL_TMP}/headers-all.deb"
+    wget -q "${KERNEL_BASE_URL}/${DEB_HEADERS}"       -O "${KERNEL_TMP}/headers.deb"
+    wget -q "${KERNEL_BASE_URL}/${DEB_IMAGE}"          -O "${KERNEL_TMP}/image.deb"
+    wget -q "${KERNEL_BASE_URL}/${DEB_MODULES}"        -O "${KERNEL_TMP}/modules.deb"
+    [[ -n "$DEB_MODULES_EXTRA" ]] && wget -q "${KERNEL_BASE_URL}/${DEB_MODULES_EXTRA}" -O "${KERNEL_TMP}/modules-extra.deb"
+
+    log "Installing kernel packages..."
+    [[ -n "$DEB_HEADERS_ALL"   ]] && dpkg -i "${KERNEL_TMP}/headers-all.deb"
+    dpkg -i "${KERNEL_TMP}/headers.deb"
+    dpkg -i "${KERNEL_TMP}/modules.deb"
+    dpkg -i "${KERNEL_TMP}/image.deb"
+    [[ -n "$DEB_MODULES_EXTRA" ]] && dpkg -i "${KERNEL_TMP}/modules-extra.deb" || true
+    apt install -f -y
+
+    rm -rf "${KERNEL_TMP}"
+    log "Kernel ${TARGET_KERNEL} installed."
+  else
+    log "Kernel ${TARGET_KERNEL} packages already present."
+  fi
+
+  log "Pinning GRUB to ${TARGET_KERNEL}..."
+  GRUB_DEFAULT_VALUE="Advanced options for Ubuntu>Ubuntu, with Linux ${TARGET_KERNEL}"
+  sed -i "s|^GRUB_DEFAULT=.*|GRUB_DEFAULT=\"${GRUB_DEFAULT_VALUE}\"|" /etc/default/grub
+  sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=5/' /etc/default/grub
+  update-grub
+  log "GRUB pinned to: ${GRUB_DEFAULT_VALUE}"
+
+  if grep -q "${TARGET_KERNEL}" /boot/grub/grub.cfg 2>/dev/null; then
+    log "Verified: ${TARGET_KERNEL} found in grub.cfg"
+  else
+    warn "${TARGET_KERNEL} NOT found in grub.cfg -- verify kernel packages installed correctly."
+  fi
+
+  echo ""
+  warn "Reboot required to activate kernel ${TARGET_KERNEL}."
+  warn "Re-run this script after reboot to complete: Docker, VS Code, ROCm, Python."
+  echo ""
+  read -rp "  Reboot now? (y/n): " DO_REBOOT
+  if [[ "$DO_REBOOT" =~ ^[Yy]$ ]]; then
+    reboot
+  else
+    warn "Reboot skipped. Re-run this script after rebooting."
+  fi
+  exit 0
+fi
+
+# ============================================================
+# STEP 3 -- User Creation & Sudo Access
+# ============================================================
+section "STEP 3 -- User Creation & Sudo Access"
 
 if id "$TARGET_USER" &>/dev/null; then
   warn "User '$TARGET_USER' already exists. Skipping creation."
@@ -70,13 +153,12 @@ else
 fi
 
 # ============================================================
-# STEP 3 -- Docker Engine
+# STEP 4 -- Docker Engine
 # ============================================================
-section "STEP 3 -- Docker Engine"
+section "STEP 4 -- Docker Engine"
 
 if command -v docker &>/dev/null; then
   warn "Docker already installed ($(docker --version)). Skipping."
-  warn "If installed via snap, remove first: snap remove docker"
 else
   if snap list docker &>/dev/null 2>&1; then
     warn "Removing conflicting Docker snap..."
@@ -115,9 +197,9 @@ else
 fi
 
 # ============================================================
-# STEP 4 -- Visual Studio Code
+# STEP 5 -- Visual Studio Code
 # ============================================================
-section "STEP 4 -- Visual Studio Code"
+section "STEP 5 -- Visual Studio Code"
 
 if dpkg -l code &>/dev/null 2>&1; then
   warn "VS Code already installed. Skipping."
@@ -142,9 +224,9 @@ https://packages.microsoft.com/repos/code stable main" | \
 fi
 
 # ============================================================
-# STEP 5 -- AMD ROCm
+# STEP 6 -- AMD ROCm
 # ============================================================
-section "STEP 5 -- AMD ROCm"
+section "STEP 6 -- AMD ROCm"
 
 ROCM_DEB_URL="https://repo.radeon.com/amdgpu-install/7.2.1/ubuntu/noble/amdgpu-install_7.2.1.70201-1_all.deb"
 ROCM_DEB="/tmp/amdgpu-install.deb"
@@ -182,9 +264,9 @@ for GRP in render video; do
 done
 
 # ============================================================
-# STEP 6 -- Python AI/ML Dependencies
+# STEP 7 -- Python AI/ML Dependencies
 # ============================================================
-section "STEP 6 -- Python AI/ML Dependencies"
+section "STEP 7 -- Python AI/ML Dependencies"
 
 apt install -y \
   python3 python3-venv python3-pip \
@@ -202,74 +284,6 @@ if grep -q "PYGLFW_LIBRARY_VARIANT" "$TARGET_BASHRC" 2>/dev/null; then
 else
   echo 'export PYGLFW_LIBRARY_VARIANT=x11' >> "$TARGET_BASHRC"
   log "Added PYGLFW_LIBRARY_VARIANT=x11 to ${TARGET_BASHRC} (fixes MuJoCo GUI on Wayland)."
-fi
-
-# ============================================================
-# STEP 7 -- Mainline Kernel + GRUB Pin
-# ============================================================
-# Installed last so everything else is in place before the single
-# reboot at the end. DKMS will auto-build amdgpu for the new kernel
-# headers as soon as they land, even before the first boot into it.
-# NOTE: Mainline kernels are unsigned -- Secure Boot must be disabled.
-# ============================================================
-section "STEP 7 -- Mainline Kernel ${TARGET_KERNEL}"
-
-if dpkg -l 2>/dev/null | grep -q "linux-image-${TARGET_KERNEL}"; then
-  log "Kernel ${TARGET_KERNEL} already installed. Skipping download."
-else
-  log "Installing mainline kernel ${TARGET_KERNEL} via .deb packages..."
-
-  KERNEL_BASE_URL="https://kernel.ubuntu.com/mainline/v6.18.20/amd64"
-  KERNEL_TMP=$(mktemp -d)
-
-  apt install -y wget curl
-
-  log "Fetching kernel package filenames from kernel.ubuntu.com..."
-  INDEX=$(curl -fsSL "${KERNEL_BASE_URL}/")
-
-  # Resolve exact filenames from the index page -- avoids hardcoding build timestamps
-  DEB_HEADERS_ALL=$(echo "$INDEX"  | grep -oP 'linux-headers-[0-9._-]+_all\.deb'                             | head -1)
-  DEB_HEADERS=$(echo "$INDEX"      | grep -oP "linux-headers-${TARGET_KERNEL}_[^\"' ]+_amd64\.deb"           | head -1)
-  DEB_IMAGE=$(echo "$INDEX"        | grep -oP "linux-image-unsigned-${TARGET_KERNEL}_[^\"' ]+_amd64\.deb"    | head -1)
-  DEB_MODULES=$(echo "$INDEX"      | grep -oP "linux-modules-${TARGET_KERNEL}_[^\"' ]+_amd64\.deb"           | head -1)
-  DEB_MODULES_EXTRA=$(echo "$INDEX"| grep -oP "linux-modules-extra-${TARGET_KERNEL}_[^\"' ]+_amd64\.deb"     | head -1 || true)
-
-  [[ -z "$DEB_HEADERS" ]] && error "Could not find linux-headers deb for ${TARGET_KERNEL} at ${KERNEL_BASE_URL}"
-  [[ -z "$DEB_IMAGE"   ]] && error "Could not find linux-image deb for ${TARGET_KERNEL} at ${KERNEL_BASE_URL}"
-  [[ -z "$DEB_MODULES" ]] && error "Could not find linux-modules deb for ${TARGET_KERNEL} at ${KERNEL_BASE_URL}"
-
-  log "Downloading: $DEB_IMAGE"
-  [[ -n "$DEB_HEADERS_ALL" ]] && wget -q "${KERNEL_BASE_URL}/${DEB_HEADERS_ALL}"  -O "${KERNEL_TMP}/linux-headers-all.deb"
-  wget -q "${KERNEL_BASE_URL}/${DEB_HEADERS}"      -O "${KERNEL_TMP}/linux-headers.deb"
-  wget -q "${KERNEL_BASE_URL}/${DEB_IMAGE}"         -O "${KERNEL_TMP}/linux-image.deb"
-  wget -q "${KERNEL_BASE_URL}/${DEB_MODULES}"       -O "${KERNEL_TMP}/linux-modules.deb"
-  [[ -n "$DEB_MODULES_EXTRA" ]] && wget -q "${KERNEL_BASE_URL}/${DEB_MODULES_EXTRA}" -O "${KERNEL_TMP}/linux-modules-extra.deb"
-
-  [[ -n "$DEB_HEADERS_ALL"   ]] && dpkg -i "${KERNEL_TMP}/linux-headers-all.deb"   || true
-  dpkg -i "${KERNEL_TMP}/linux-headers.deb"
-  dpkg -i "${KERNEL_TMP}/linux-modules.deb"
-  dpkg -i "${KERNEL_TMP}/linux-image.deb"
-  [[ -n "$DEB_MODULES_EXTRA" ]] && dpkg -i "${KERNEL_TMP}/linux-modules-extra.deb" || true
-  apt install -f -y
-
-  rm -rf "${KERNEL_TMP}"
-  log "Kernel ${TARGET_KERNEL} installed."
-fi
-
-log "Pinning GRUB to boot kernel ${TARGET_KERNEL}..."
-
-GRUB_DEFAULT_VALUE="Advanced options for Ubuntu>Ubuntu, with Linux ${TARGET_KERNEL}"
-sed -i "s|^GRUB_DEFAULT=.*|GRUB_DEFAULT=\"${GRUB_DEFAULT_VALUE}\"|" /etc/default/grub
-sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=5/' /etc/default/grub
-
-update-grub
-log "GRUB pinned to: ${GRUB_DEFAULT_VALUE}"
-
-GRUB_CFG="/boot/grub/grub.cfg"
-if grep -q "${TARGET_KERNEL}" "$GRUB_CFG" 2>/dev/null; then
-  log "Verified: kernel ${TARGET_KERNEL} found in ${GRUB_CFG}"
-else
-  warn "Kernel ${TARGET_KERNEL} NOT found in ${GRUB_CFG} -- check .deb filenames match kernel.ubuntu.com."
 fi
 
 # ============================================================
