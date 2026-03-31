@@ -101,13 +101,7 @@ GRUB_CMDLINE_LINUX="${GRUB_CMDLINE_LINUX:+$GRUB_CMDLINE_LINUX }amdgpu.cwsr_enabl
 sudo update-grub
 ```
 
-## Reboot
 
-```bash
-sudo reboot
-```
-
----
 
 # 🔹 4. Run Setup Script
 
@@ -116,14 +110,21 @@ Run:
 ```bash
 sudo bash setup.sh amd-user
 ```
+# 🔹 4. Run Important dkms
+```bash
+sudo apt autoremove amdgpu-dkms dkms
+sudo usermod -a -G render,video $LOGNAME
+```
 
-# 🔹 4.1. Re Run Setup Script after reboot
-
-Run:
+## Reboot
 
 ```bash
-sudo bash setup.sh amd-user
+sudo reboot
 ```
+
+---
+
+
 ## This installs:
 
 * Git
