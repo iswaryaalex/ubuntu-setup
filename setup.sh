@@ -205,11 +205,9 @@ section "STEP 6 -- AMD ROCm"
 
 ACTIVE_KERNEL=$(uname -r)
 if [[ "$ACTIVE_KERNEL" != "${TARGET_KERNEL}"* ]]; then
-  warn "Running kernel is ${ACTIVE_KERNEL}, expected ${TARGET_KERNEL}."
-  warn "ROCm DKMS may build against the wrong headers. Reboot first if kernel was just changed."
-else
-  log "Confirmed kernel ${ACTIVE_KERNEL} -- safe to install ROCm."
+  error "Running kernel is ${ACTIVE_KERNEL}, expected ${TARGET_KERNEL}. Reboot into the correct kernel and re-run."
 fi
+log "Confirmed kernel ${ACTIVE_KERNEL} -- safe to install ROCm."
 
 ROCM_DEB_URL="https://repo.radeon.com/amdgpu-install/7.2.1/ubuntu/noble/amdgpu-install_7.2.1.70201-1_all.deb"
 ROCM_DEB="/tmp/amdgpu-install.deb"
