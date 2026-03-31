@@ -250,13 +250,12 @@ else
   # the mainline kernel (ROCm 7.2.1 DKMS does not support 6.18). The in-tree
   # amdgpu driver in kernel 6.18 is used instead -- ROCm userspace still installs.
   amdgpu-install -y --usecase=graphics,rocm || {
-    warn "amdgpu-install exited with error (likely amdgpu-dkms DKMS build failure on ${TARGET_KERNEL})."
-    warn "Removing broken amdgpu-dkms package -- in-tree amdgpu driver will be used instead."
-    dpkg --remove --force-remove-reinstreq amdgpu-dkms 2>/dev/null || true
-    apt remove --purge -y amdgpu-dkms 2>/dev/null || true
+    warn "amdgpu-install failed -- amdgpu-dkms does not support kernel ${TARGET_KERNEL}."
+    warn "Force-removing broken amdgpu-dkms. In-tree amdgpu driver will be used."
+    dpkg --purge --force-all amdgpu-dkms 2>/dev/null || \
+      dpkg --remove --force-remove-reinstreq amdgpu-dkms 2>/dev/null || true
     dpkg --configure -a 2>/dev/null || true
-    apt install -f -y
-    log "ROCm userspace installed. amdgpu-dkms skipped (not supported on ${TARGET_KERNEL})."
+    log "ROCm userspace installed. amdgpu-dkms removed (unsupported on ${TARGET_KERNEL})."
   }
 
   rm -f "$ROCM_DEB"
