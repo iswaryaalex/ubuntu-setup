@@ -219,28 +219,37 @@ if dpkg -l 2>/dev/null | grep -q "linux-image-${TARGET_KERNEL}"; then
 else
   log "Installing mainline kernel ${TARGET_KERNEL} via .deb packages..."
 
-  KERNEL_BUILD="061820"
   KERNEL_BASE_URL="https://kernel.ubuntu.com/mainline/v6.18.20/amd64"
   KERNEL_TMP=$(mktemp -d)
 
-  apt install -y wget
+  apt install -y wget curl
 
-  wget -q "${KERNEL_BASE_URL}/linux-headers-${TARGET_KERNEL}_${KERNEL_BUILD}.202507140733_amd64.deb" \
-       -O "${KERNEL_TMP}/linux-headers.deb"
-  wget -q "${KERNEL_BASE_URL}/linux-headers-${KERNEL_BUILD}.202507140733_all.deb" \
-       -O "${KERNEL_TMP}/linux-headers-all.deb" || true
-  wget -q "${KERNEL_BASE_URL}/linux-image-unsigned-${TARGET_KERNEL}_${KERNEL_BUILD}.202507140733_amd64.deb" \
-       -O "${KERNEL_TMP}/linux-image.deb"
-  wget -q "${KERNEL_BASE_URL}/linux-modules-${TARGET_KERNEL}_${KERNEL_BUILD}.202507140733_amd64.deb" \
-       -O "${KERNEL_TMP}/linux-modules.deb"
-  wget -q "${KERNEL_BASE_URL}/linux-modules-extra-${TARGET_KERNEL}_${KERNEL_BUILD}.202507140733_amd64.deb" \
-       -O "${KERNEL_TMP}/linux-modules-extra.deb" || true
+  log "Fetching kernel package filenames from kernel.ubuntu.com..."
+  INDEX=$(curl -fsSL "${KERNEL_BASE_URL}/")
 
-  dpkg -i "${KERNEL_TMP}"/linux-headers-all.deb 2>/dev/null || true
-  dpkg -i "${KERNEL_TMP}"/linux-headers.deb
-  dpkg -i "${KERNEL_TMP}"/linux-modules.deb
-  dpkg -i "${KERNEL_TMP}"/linux-image.deb
-  dpkg -i "${KERNEL_TMP}"/linux-modules-extra.deb 2>/dev/null || true
+  # Resolve exact filenames from the index page -- avoids hardcoding build timestamps
+  DEB_HEADERS_ALL=$(echo "$INDEX"  | grep -oP 'linux-headers-[0-9._-]+_all\.deb'                             | head -1)
+  DEB_HEADERS=$(echo "$INDEX"      | grep -oP "linux-headers-${TARGET_KERNEL}_[^\"' ]+_amd64\.deb"           | head -1)
+  DEB_IMAGE=$(echo "$INDEX"        | grep -oP "linux-image-unsigned-${TARGET_KERNEL}_[^\"' ]+_amd64\.deb"    | head -1)
+  DEB_MODULES=$(echo "$INDEX"      | grep -oP "linux-modules-${TARGET_KERNEL}_[^\"' ]+_amd64\.deb"           | head -1)
+  DEB_MODULES_EXTRA=$(echo "$INDEX"| grep -oP "linux-modules-extra-${TARGET_KERNEL}_[^\"' ]+_amd64\.deb"     | head -1 || true)
+
+  [[ -z "$DEB_HEADERS" ]] && error "Could not find linux-headers deb for ${TARGET_KERNEL} at ${KERNEL_BASE_URL}"
+  [[ -z "$DEB_IMAGE"   ]] && error "Could not find linux-image deb for ${TARGET_KERNEL} at ${KERNEL_BASE_URL}"
+  [[ -z "$DEB_MODULES" ]] && error "Could not find linux-modules deb for ${TARGET_KERNEL} at ${KERNEL_BASE_URL}"
+
+  log "Downloading: $DEB_IMAGE"
+  [[ -n "$DEB_HEADERS_ALL" ]] && wget -q "${KERNEL_BASE_URL}/${DEB_HEADERS_ALL}"  -O "${KERNEL_TMP}/linux-headers-all.deb"
+  wget -q "${KERNEL_BASE_URL}/${DEB_HEADERS}"      -O "${KERNEL_TMP}/linux-headers.deb"
+  wget -q "${KERNEL_BASE_URL}/${DEB_IMAGE}"         -O "${KERNEL_TMP}/linux-image.deb"
+  wget -q "${KERNEL_BASE_URL}/${DEB_MODULES}"       -O "${KERNEL_TMP}/linux-modules.deb"
+  [[ -n "$DEB_MODULES_EXTRA" ]] && wget -q "${KERNEL_BASE_URL}/${DEB_MODULES_EXTRA}" -O "${KERNEL_TMP}/linux-modules-extra.deb"
+
+  [[ -n "$DEB_HEADERS_ALL"   ]] && dpkg -i "${KERNEL_TMP}/linux-headers-all.deb"   || true
+  dpkg -i "${KERNEL_TMP}/linux-headers.deb"
+  dpkg -i "${KERNEL_TMP}/linux-modules.deb"
+  dpkg -i "${KERNEL_TMP}/linux-image.deb"
+  [[ -n "$DEB_MODULES_EXTRA" ]] && dpkg -i "${KERNEL_TMP}/linux-modules-extra.deb" || true
   apt install -f -y
 
   rm -rf "${KERNEL_TMP}"
