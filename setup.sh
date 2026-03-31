@@ -61,8 +61,8 @@ section "STEP 2 -- OEM Kernel ${TARGET_KERNEL}"
 
 RUNNING_KERNEL=$(uname -r)
 
-if [[ "$RUNNING_KERNEL" == "${TARGET_KERNEL}"* ]]; then
-  log "Kernel ${TARGET_KERNEL} is already running. Skipping."
+if [[ "$RUNNING_KERNEL" == "6.17"* ]]; then
+  log "Kernel ${RUNNING_KERNEL} is 6.17 series -- skipping kernel installation."
 else
   if dpkg -l 2>/dev/null | grep -q "linux-image-${TARGET_KERNEL}"; then
     warn "Kernel ${TARGET_KERNEL} is installed but not yet active (running: ${RUNNING_KERNEL})."
@@ -204,8 +204,8 @@ fi
 section "STEP 6 -- AMD ROCm"
 
 ACTIVE_KERNEL=$(uname -r)
-if [[ "$ACTIVE_KERNEL" != "${TARGET_KERNEL}"* ]]; then
-  error "Running kernel is ${ACTIVE_KERNEL}, expected ${TARGET_KERNEL}. Reboot into the correct kernel and re-run."
+if [[ "$ACTIVE_KERNEL" != "6.17"* ]]; then
+  error "Running kernel is ${ACTIVE_KERNEL}, expected 6.17.x. Reboot into the correct kernel and re-run."
 fi
 log "Confirmed kernel ${ACTIVE_KERNEL} -- safe to install ROCm."
 
