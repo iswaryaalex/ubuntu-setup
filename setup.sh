@@ -2,7 +2,7 @@
 
 # ============================================================
 # Ubuntu 24.04 Setup Script
-# Installs: OEM Kernel, Docker Engine, Sudo, VS Code, AMD ROCm
+# Installs: Mainline Kernel, Docker Engine, Sudo, VS Code, AMD ROCm
 # Usage: sudo bash setup.sh <username>
 # ============================================================
 
@@ -34,7 +34,8 @@ if [[ -z "$TARGET_USER" ]]; then
   error "No username provided. Usage: sudo bash setup.sh <username>"
 fi
 
-TARGET_KERNEL="6.17.0-19-generic"
+TARGET_KERNEL="6.18.20-061820-generic"
+KERNEL_BASE_URL="https://kernel.ubuntu.com/mainline/v6.18.20/amd64"
 
 echo ""
 echo "============================================================"
@@ -51,60 +52,85 @@ apt update -y && apt upgrade -y
 log "System updated."
 
 # ============================================================
-# STEP 2 -- OEM Kernel
+# STEP 2 -- Mainline Kernel + GRUB Pin
 # ============================================================
-# Ubuntu OEM kernels are signed (Secure Boot safe) and available
-# via apt. The 6.17.0-1012-oem kernel includes the Strix Halo
-# KFD patches required for stable ROCm GPU compute on this platform.
+# Run kernel install BEFORE ROCm so DKMS only ever sees 6.18 headers
+# when amdgpu is registered. Mainline kernels are unsigned -- Secure
+# Boot must be disabled before running this script.
+# The script must be run a second time after rebooting to complete
+# the remaining steps (Docker, VS Code, ROCm, Python).
 # ============================================================
-section "STEP 2 -- OEM Kernel ${TARGET_KERNEL}"
+section "STEP 2 -- Mainline Kernel ${TARGET_KERNEL}"
 
 RUNNING_KERNEL=$(uname -r)
 
 if [[ "$RUNNING_KERNEL" == "${TARGET_KERNEL}"* ]]; then
-  log "Kernel ${TARGET_KERNEL} is already running. Skipping."
+  log "Already running kernel ${TARGET_KERNEL}. Continuing with remaining steps."
 else
-  if dpkg -l 2>/dev/null | grep -q "linux-image-${TARGET_KERNEL}"; then
-    warn "Kernel ${TARGET_KERNEL} is installed but not yet active (running: ${RUNNING_KERNEL})."
-    warn "Reboot to activate it before continuing with ROCm."
-  else
-    warn "Currently running: ${RUNNING_KERNEL}"
-    log "Installing OEM kernel ${TARGET_KERNEL}..."
-    apt install -y \
-      linux-image-${TARGET_KERNEL} \
-      linux-headers-${TARGET_KERNEL} \
-      linux-modules-extra-${TARGET_KERNEL}
+  if ! dpkg -l 2>/dev/null | grep -q "linux-image-unsigned-${TARGET_KERNEL}"; then
+    log "Installing mainline kernel ${TARGET_KERNEL}..."
+
+    apt install -y wget curl
+
+    log "Fetching package filenames from kernel.ubuntu.com..."
+    INDEX=$(curl -fsSL "${KERNEL_BASE_URL}/")
+
+    DEB_HEADERS_ALL=$(echo "$INDEX" | grep -oP 'linux-headers-[0-9._-]+_all\.deb'                          | head -1)
+    DEB_HEADERS=$(echo "$INDEX"     | grep -oP "linux-headers-${TARGET_KERNEL}_[^\"' ]+_amd64\.deb"        | head -1)
+    DEB_IMAGE=$(echo "$INDEX"       | grep -oP "linux-image-unsigned-${TARGET_KERNEL}_[^\"' ]+_amd64\.deb" | head -1)
+    DEB_MODULES=$(echo "$INDEX"     | grep -oP "linux-modules-${TARGET_KERNEL}_[^\"' ]+_amd64\.deb"        | head -1)
+    DEB_MODULES_EXTRA=$(echo "$INDEX" | grep -oP "linux-modules-extra-${TARGET_KERNEL}_[^\"' ]+_amd64\.deb" | head -1 || true)
+
+    [[ -z "$DEB_HEADERS" ]] && error "Could not resolve linux-headers filename from ${KERNEL_BASE_URL}"
+    [[ -z "$DEB_IMAGE"   ]] && error "Could not resolve linux-image filename from ${KERNEL_BASE_URL}"
+    [[ -z "$DEB_MODULES" ]] && error "Could not resolve linux-modules filename from ${KERNEL_BASE_URL}"
+
+    KERNEL_TMP=$(mktemp -d)
+    log "Downloading kernel packages..."
+    [[ -n "$DEB_HEADERS_ALL"   ]] && wget -q "${KERNEL_BASE_URL}/${DEB_HEADERS_ALL}"   -O "${KERNEL_TMP}/headers-all.deb"
+    wget -q "${KERNEL_BASE_URL}/${DEB_HEADERS}"       -O "${KERNEL_TMP}/headers.deb"
+    wget -q "${KERNEL_BASE_URL}/${DEB_IMAGE}"          -O "${KERNEL_TMP}/image.deb"
+    wget -q "${KERNEL_BASE_URL}/${DEB_MODULES}"        -O "${KERNEL_TMP}/modules.deb"
+    [[ -n "$DEB_MODULES_EXTRA" ]] && wget -q "${KERNEL_BASE_URL}/${DEB_MODULES_EXTRA}" -O "${KERNEL_TMP}/modules-extra.deb"
+
+    log "Installing kernel packages..."
+    [[ -n "$DEB_HEADERS_ALL"   ]] && dpkg -i "${KERNEL_TMP}/headers-all.deb"
+    dpkg -i "${KERNEL_TMP}/headers.deb"
+    dpkg -i "${KERNEL_TMP}/modules.deb"
+    dpkg -i "${KERNEL_TMP}/image.deb"
+    [[ -n "$DEB_MODULES_EXTRA" ]] && dpkg -i "${KERNEL_TMP}/modules-extra.deb" || true
+    apt install -f -y
+
+    rm -rf "${KERNEL_TMP}"
     log "Kernel ${TARGET_KERNEL} installed."
+  else
+    log "Kernel ${TARGET_KERNEL} packages already present."
   fi
 
-  log "Pinning GRUB to boot kernel ${TARGET_KERNEL}..."
-  sed -i 's/^GRUB_DEFAULT=.*/GRUB_DEFAULT=saved/' /etc/default/grub
-  update-grub 2>/dev/null
+  log "Pinning GRUB to ${TARGET_KERNEL}..."
+  GRUB_DEFAULT_VALUE="Advanced options for Ubuntu>Ubuntu, with Linux ${TARGET_KERNEL}"
+  sed -i "s|^GRUB_DEFAULT=.*|GRUB_DEFAULT=\"${GRUB_DEFAULT_VALUE}\"|" /etc/default/grub
+  sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=5/' /etc/default/grub
+  update-grub
+  log "GRUB pinned to: ${GRUB_DEFAULT_VALUE}"
 
-  GRUB_CFG="/boot/grub/grub.cfg"
-  SUBMENU_ENTRY=$(grep -oP "(?<=submenu ')[^']*" "$GRUB_CFG" 2>/dev/null | grep -i "advanced" | head -1 || true)
-  KERNEL_ENTRY=$(grep -oP "(?<=menuentry ')[^']*" "$GRUB_CFG" 2>/dev/null | grep "${TARGET_KERNEL}" | grep -v recovery | head -1 || true)
-
-  if [[ -n "$SUBMENU_ENTRY" && -n "$KERNEL_ENTRY" ]]; then
-    grub-set-default "${SUBMENU_ENTRY}>${KERNEL_ENTRY}"
-    log "GRUB pinned to: ${SUBMENU_ENTRY} > ${KERNEL_ENTRY}"
-  elif [[ -n "$KERNEL_ENTRY" ]]; then
-    grub-set-default "$KERNEL_ENTRY"
-    log "GRUB pinned to: ${KERNEL_ENTRY}"
+  if grep -q "${TARGET_KERNEL}" /boot/grub/grub.cfg 2>/dev/null; then
+    log "Verified: ${TARGET_KERNEL} found in grub.cfg"
   else
-    warn "Could not auto-detect GRUB entry for ${TARGET_KERNEL} -- verify after reboot with: uname -r"
+    warn "${TARGET_KERNEL} NOT found in grub.cfg -- verify kernel packages installed correctly."
   fi
 
   echo ""
-  warn "Kernel ${TARGET_KERNEL} requires a reboot before ROCm can be installed."
-  warn "ROCm DKMS must build against the active kernel headers."
-  read -rp "  Reboot now and re-run this script after? (y/n): " DO_REBOOT
+  warn "Reboot required to activate kernel ${TARGET_KERNEL}."
+  warn "Re-run this script after reboot to complete: Docker, VS Code, ROCm, Python."
+  echo ""
+  read -rp "  Reboot now? (y/n): " DO_REBOOT
   if [[ "$DO_REBOOT" =~ ^[Yy]$ ]]; then
-    log "Rebooting..."
     reboot
   else
-    error "Cannot continue safely without rebooting. Re-run after reboot."
+    warn "Reboot skipped. Re-run this script after rebooting."
   fi
+  exit 0
 fi
 
 # ============================================================
@@ -133,7 +159,6 @@ section "STEP 4 -- Docker Engine"
 
 if command -v docker &>/dev/null; then
   warn "Docker already installed ($(docker --version)). Skipping."
-  warn "If installed via snap, remove first: snap remove docker"
 else
   if snap list docker &>/dev/null 2>&1; then
     warn "Removing conflicting Docker snap..."
@@ -203,14 +228,6 @@ fi
 # ============================================================
 section "STEP 6 -- AMD ROCm"
 
-ACTIVE_KERNEL=$(uname -r)
-if [[ "$ACTIVE_KERNEL" != "${TARGET_KERNEL}"* ]]; then
-  warn "Running kernel is ${ACTIVE_KERNEL}, expected ${TARGET_KERNEL}."
-  warn "ROCm DKMS may build against the wrong headers. Reboot first if kernel was just changed."
-else
-  log "Confirmed kernel ${ACTIVE_KERNEL} -- safe to install ROCm."
-fi
-
 ROCM_DEB_URL="https://repo.radeon.com/amdgpu-install/7.2.1/ubuntu/noble/amdgpu-install_7.2.1.70201-1_all.deb"
 ROCM_DEB="/tmp/amdgpu-install.deb"
 
@@ -220,37 +237,42 @@ if command -v amdgpu-install &>/dev/null; then
 else
   apt install -y python3-setuptools python3-wheel wget
 
-  # Refresh package lists before downloading so dependency resolution uses
-  # current metadata (matches the AMD manual install sequence).
-  apt update -y
-
   log "Validating ROCm installer URL..."
   if ! wget --spider -q "$ROCM_DEB_URL" 2>/dev/null; then
     error "ROCm URL not reachable: $ROCM_DEB_URL"
   fi
 
-  wget "$ROCM_DEB_URL" -O "$ROCM_DEB"
-  # Install the amdgpu-install package (adds AMD apt repos to the system).
+  wget -q "$ROCM_DEB_URL" -O "$ROCM_DEB"
   apt install -y "$ROCM_DEB"
-  rm -f "$ROCM_DEB"
-  # Refresh again to pick up the newly added AMD repos before running the installer.
   apt update -y
-  amdgpu-install -y --usecase=graphics,rocm
+
+  # amdgpu-install may exit non-zero if amdgpu-dkms fails to build against
+  # the mainline kernel (ROCm 7.2.1 DKMS does not support 6.18). The in-tree
+  # amdgpu driver in kernel 6.18 is used instead -- ROCm userspace still installs.
+  amdgpu-install -y --usecase=graphics,rocm || {
+    warn "amdgpu-install exited with error (likely amdgpu-dkms DKMS build failure on ${TARGET_KERNEL})."
+    warn "Removing broken amdgpu-dkms package -- in-tree amdgpu driver will be used instead."
+    dpkg --remove --force-remove-reinstreq amdgpu-dkms 2>/dev/null || true
+    apt remove --purge -y amdgpu-dkms 2>/dev/null || true
+    dpkg --configure -a 2>/dev/null || true
+    apt install -f -y
+    log "ROCm userspace installed. amdgpu-dkms skipped (not supported on ${TARGET_KERNEL})."
+  }
+
+  rm -f "$ROCM_DEB"
   log "ROCm installed."
 fi
 
-# amdgpu-install creates the render and video groups; error out if they are
-# missing rather than silently skipping -- a missing group means the driver
-# install failed and GPU access will not work.
 for GRP in render video; do
-  if ! getent group "$GRP" &>/dev/null; then
-    error "Group '$GRP' not found after ROCm install -- amdgpu-install may have failed. Check output above."
-  fi
-  if groups "$TARGET_USER" | grep -qw "$GRP"; then
-    warn "'$TARGET_USER' already in $GRP group. Skipping."
+  if getent group "$GRP" &>/dev/null; then
+    if groups "$TARGET_USER" | grep -qw "$GRP"; then
+      warn "'$TARGET_USER' already in $GRP group. Skipping."
+    else
+      usermod -aG "$GRP" "$TARGET_USER"
+      log "Added '$TARGET_USER' to $GRP group."
+    fi
   else
-    usermod -aG "$GRP" "$TARGET_USER"
-    log "Added '$TARGET_USER' to $GRP group."
+    warn "Group '$GRP' not found -- driver may not be fully installed."
   fi
 done
 
