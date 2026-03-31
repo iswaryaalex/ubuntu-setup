@@ -32,7 +32,7 @@ Control Panel → Power Options → "Choose what the power buttons do" → unche
 
 ---
 
-## Disable Secure Boot (BIOS)
+## BIOS - Disable Secure Boot
 
 ### Enter BIOS
 
@@ -117,6 +117,13 @@ Run:
 sudo bash setup.sh amd-user
 ```
 
+# 🔹 4.1. Re Run Setup Script after reboot
+
+Run:
+
+```bash
+sudo bash setup.sh amd-user
+```
 ## This installs:
 
 * Git
