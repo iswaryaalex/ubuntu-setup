@@ -2,7 +2,7 @@
 
 # ============================================================
 # Ubuntu 24.04 Setup Script
-# Installs: OEM Kernel, Docker Engine, Sudo, VS Code, AMD ROCm
+# Installs: Mainline Kernel, Docker Engine, Sudo, VS Code, AMD ROCm
 # Usage: sudo bash setup.sh <username>
 # ============================================================
 
@@ -34,7 +34,7 @@ if [[ -z "$TARGET_USER" ]]; then
   error "No username provided. Usage: sudo bash setup.sh <username>"
 fi
 
-TARGET_KERNEL="6.17.0-19-generic"
+TARGET_KERNEL="6.18.20-061820-generic"
 
 echo ""
 echo "============================================================"
@@ -51,66 +51,9 @@ apt update -y && apt upgrade -y
 log "System updated."
 
 # ============================================================
-# STEP 2 -- OEM Kernel
+# STEP 2 -- User Creation & Sudo Access
 # ============================================================
-# Ubuntu OEM kernels are signed (Secure Boot safe) and available
-# via apt. The 6.17.0-1012-oem kernel includes the Strix Halo
-# KFD patches required for stable ROCm GPU compute on this platform.
-# ============================================================
-section "STEP 2 -- OEM Kernel ${TARGET_KERNEL}"
-
-RUNNING_KERNEL=$(uname -r)
-
-if [[ "$RUNNING_KERNEL" == "${TARGET_KERNEL}"* ]]; then
-  log "Kernel ${TARGET_KERNEL} is already running. Skipping."
-else
-  if dpkg -l 2>/dev/null | grep -q "linux-image-${TARGET_KERNEL}"; then
-    warn "Kernel ${TARGET_KERNEL} is installed but not yet active (running: ${RUNNING_KERNEL})."
-    warn "Reboot to activate it before continuing with ROCm."
-  else
-    warn "Currently running: ${RUNNING_KERNEL}"
-    log "Installing OEM kernel ${TARGET_KERNEL}..."
-    apt install -y \
-      linux-image-${TARGET_KERNEL} \
-      linux-headers-${TARGET_KERNEL} \
-      linux-modules-extra-${TARGET_KERNEL}
-    log "Kernel ${TARGET_KERNEL} installed."
-  fi
-
-  log "Pinning GRUB to boot kernel ${TARGET_KERNEL}..."
-  sed -i 's/^GRUB_DEFAULT=.*/GRUB_DEFAULT=saved/' /etc/default/grub
-  update-grub 2>/dev/null
-
-  GRUB_CFG="/boot/grub/grub.cfg"
-  SUBMENU_ENTRY=$(grep -oP "(?<=submenu ')[^']*" "$GRUB_CFG" 2>/dev/null | grep -i "advanced" | head -1 || true)
-  KERNEL_ENTRY=$(grep -oP "(?<=menuentry ')[^']*" "$GRUB_CFG" 2>/dev/null | grep "${TARGET_KERNEL}" | grep -v recovery | head -1 || true)
-
-  if [[ -n "$SUBMENU_ENTRY" && -n "$KERNEL_ENTRY" ]]; then
-    grub-set-default "${SUBMENU_ENTRY}>${KERNEL_ENTRY}"
-    log "GRUB pinned to: ${SUBMENU_ENTRY} > ${KERNEL_ENTRY}"
-  elif [[ -n "$KERNEL_ENTRY" ]]; then
-    grub-set-default "$KERNEL_ENTRY"
-    log "GRUB pinned to: ${KERNEL_ENTRY}"
-  else
-    warn "Could not auto-detect GRUB entry for ${TARGET_KERNEL} -- verify after reboot with: uname -r"
-  fi
-
-  echo ""
-  warn "Kernel ${TARGET_KERNEL} requires a reboot before ROCm can be installed."
-  warn "ROCm DKMS must build against the active kernel headers."
-  read -rp "  Reboot now and re-run this script after? (y/n): " DO_REBOOT
-  if [[ "$DO_REBOOT" =~ ^[Yy]$ ]]; then
-    log "Rebooting..."
-    reboot
-  else
-    error "Cannot continue safely without rebooting. Re-run after reboot."
-  fi
-fi
-
-# ============================================================
-# STEP 3 -- User Creation & Sudo Access
-# ============================================================
-section "STEP 3 -- User Creation & Sudo Access"
+section "STEP 2 -- User Creation & Sudo Access"
 
 if id "$TARGET_USER" &>/dev/null; then
   warn "User '$TARGET_USER' already exists. Skipping creation."
@@ -127,9 +70,9 @@ else
 fi
 
 # ============================================================
-# STEP 4 -- Docker Engine
+# STEP 3 -- Docker Engine
 # ============================================================
-section "STEP 4 -- Docker Engine"
+section "STEP 3 -- Docker Engine"
 
 if command -v docker &>/dev/null; then
   warn "Docker already installed ($(docker --version)). Skipping."
@@ -172,9 +115,9 @@ else
 fi
 
 # ============================================================
-# STEP 5 -- Visual Studio Code
+# STEP 4 -- Visual Studio Code
 # ============================================================
-section "STEP 5 -- Visual Studio Code"
+section "STEP 4 -- Visual Studio Code"
 
 if dpkg -l code &>/dev/null 2>&1; then
   warn "VS Code already installed. Skipping."
@@ -199,17 +142,9 @@ https://packages.microsoft.com/repos/code stable main" | \
 fi
 
 # ============================================================
-# STEP 6 -- AMD ROCm
+# STEP 5 -- AMD ROCm
 # ============================================================
-section "STEP 6 -- AMD ROCm"
-
-ACTIVE_KERNEL=$(uname -r)
-if [[ "$ACTIVE_KERNEL" != "${TARGET_KERNEL}"* ]]; then
-  warn "Running kernel is ${ACTIVE_KERNEL}, expected ${TARGET_KERNEL}."
-  warn "ROCm DKMS may build against the wrong headers. Reboot first if kernel was just changed."
-else
-  log "Confirmed kernel ${ACTIVE_KERNEL} -- safe to install ROCm."
-fi
+section "STEP 5 -- AMD ROCm"
 
 ROCM_DEB_URL="https://repo.radeon.com/amdgpu-install/7.2.1/ubuntu/noble/amdgpu-install_7.2.1.70201-1_all.deb"
 ROCM_DEB="/tmp/amdgpu-install.deb"
@@ -247,9 +182,9 @@ for GRP in render video; do
 done
 
 # ============================================================
-# STEP 7 -- Python AI/ML Dependencies
+# STEP 6 -- Python AI/ML Dependencies
 # ============================================================
-section "STEP 7 -- Python AI/ML Dependencies"
+section "STEP 6 -- Python AI/ML Dependencies"
 
 apt install -y \
   python3 python3-venv python3-pip \
@@ -267,6 +202,65 @@ if grep -q "PYGLFW_LIBRARY_VARIANT" "$TARGET_BASHRC" 2>/dev/null; then
 else
   echo 'export PYGLFW_LIBRARY_VARIANT=x11' >> "$TARGET_BASHRC"
   log "Added PYGLFW_LIBRARY_VARIANT=x11 to ${TARGET_BASHRC} (fixes MuJoCo GUI on Wayland)."
+fi
+
+# ============================================================
+# STEP 7 -- Mainline Kernel + GRUB Pin
+# ============================================================
+# Installed last so everything else is in place before the single
+# reboot at the end. DKMS will auto-build amdgpu for the new kernel
+# headers as soon as they land, even before the first boot into it.
+# NOTE: Mainline kernels are unsigned -- Secure Boot must be disabled.
+# ============================================================
+section "STEP 7 -- Mainline Kernel ${TARGET_KERNEL}"
+
+if dpkg -l 2>/dev/null | grep -q "linux-image-${TARGET_KERNEL}"; then
+  log "Kernel ${TARGET_KERNEL} already installed. Skipping download."
+else
+  log "Installing mainline kernel ${TARGET_KERNEL} via .deb packages..."
+
+  KERNEL_BUILD="061820"
+  KERNEL_BASE_URL="https://kernel.ubuntu.com/mainline/v6.18.20/amd64"
+  KERNEL_TMP=$(mktemp -d)
+
+  apt install -y wget
+
+  wget -q "${KERNEL_BASE_URL}/linux-headers-${TARGET_KERNEL}_${KERNEL_BUILD}.202507140733_amd64.deb" \
+       -O "${KERNEL_TMP}/linux-headers.deb"
+  wget -q "${KERNEL_BASE_URL}/linux-headers-${KERNEL_BUILD}.202507140733_all.deb" \
+       -O "${KERNEL_TMP}/linux-headers-all.deb" || true
+  wget -q "${KERNEL_BASE_URL}/linux-image-unsigned-${TARGET_KERNEL}_${KERNEL_BUILD}.202507140733_amd64.deb" \
+       -O "${KERNEL_TMP}/linux-image.deb"
+  wget -q "${KERNEL_BASE_URL}/linux-modules-${TARGET_KERNEL}_${KERNEL_BUILD}.202507140733_amd64.deb" \
+       -O "${KERNEL_TMP}/linux-modules.deb"
+  wget -q "${KERNEL_BASE_URL}/linux-modules-extra-${TARGET_KERNEL}_${KERNEL_BUILD}.202507140733_amd64.deb" \
+       -O "${KERNEL_TMP}/linux-modules-extra.deb" || true
+
+  dpkg -i "${KERNEL_TMP}"/linux-headers-all.deb 2>/dev/null || true
+  dpkg -i "${KERNEL_TMP}"/linux-headers.deb
+  dpkg -i "${KERNEL_TMP}"/linux-modules.deb
+  dpkg -i "${KERNEL_TMP}"/linux-image.deb
+  dpkg -i "${KERNEL_TMP}"/linux-modules-extra.deb 2>/dev/null || true
+  apt install -f -y
+
+  rm -rf "${KERNEL_TMP}"
+  log "Kernel ${TARGET_KERNEL} installed."
+fi
+
+log "Pinning GRUB to boot kernel ${TARGET_KERNEL}..."
+
+GRUB_DEFAULT_VALUE="Advanced options for Ubuntu>Ubuntu, with Linux ${TARGET_KERNEL}"
+sed -i "s|^GRUB_DEFAULT=.*|GRUB_DEFAULT=\"${GRUB_DEFAULT_VALUE}\"|" /etc/default/grub
+sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=5/' /etc/default/grub
+
+update-grub
+log "GRUB pinned to: ${GRUB_DEFAULT_VALUE}"
+
+GRUB_CFG="/boot/grub/grub.cfg"
+if grep -q "${TARGET_KERNEL}" "$GRUB_CFG" 2>/dev/null; then
+  log "Verified: kernel ${TARGET_KERNEL} found in ${GRUB_CFG}"
+else
+  warn "Kernel ${TARGET_KERNEL} NOT found in ${GRUB_CFG} -- check .deb filenames match kernel.ubuntu.com."
 fi
 
 # ============================================================
