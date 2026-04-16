@@ -146,15 +146,22 @@ docker pull rocm/vllm-dev:rocm7.2.1_navi_ubuntu24.04_py3.12_pytorch_2.9_vllm_0.1
 
 ```bash
 docker run -it \
-  --privileged \
+  --name workshop-env \
+  --ipc=host \
   --device=/dev/kfd \
   --device=/dev/dri \
-  --network=host \
-  --group-add sudo \
-  -w /app/workshop/ \
-  --name workshop_env \
+  --group-add video \
+  --group-add render \
+  --security-opt seccomp=unconfined \
+  -v $HOME:/root/home \
+  -v $PWD:/workspace \
+  -v $HOME/.cache/huggingface:/root/.cache/huggingface \
+  -w /workspace \
+  -p 8888:8888 \
+  -e PYTHONUNBUFFERED=1 \
+  -e HF_HOME=/root/.cache/huggingface \
   rocm/vllm-dev:rocm7.2.1_navi_ubuntu24.04_py3.12_pytorch_2.9_vllm_0.16.0 \
-  /bin/bash
+  bash
 ```
 
 ---
