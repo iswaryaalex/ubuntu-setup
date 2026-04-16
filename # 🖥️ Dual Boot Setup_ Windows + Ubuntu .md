@@ -106,7 +106,7 @@ sudo update-grub
 # 🔹 4. Run Setup Script
 
 Run:
-
+You'll have to run this setup script Twice. After your first reboot, make sure to rerun `setup.sh` to complete the installation
 ```bash
 sudo bash setup.sh amd-user
 ```
@@ -122,8 +122,10 @@ sudo usermod -a -G render,video $LOGNAME
 sudo reboot
 ```
 
----
-
+## Re-run
+```bash
+sudo bash setup.sh amd-user
+```
 
 ## This installs:
 
